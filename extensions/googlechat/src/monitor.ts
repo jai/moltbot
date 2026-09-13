@@ -12,6 +12,7 @@ import { channelBlockedPatch, channelReadyPatch } from "openclaw/plugin-sdk/gate
 import { MediaFetchError } from "openclaw/plugin-sdk/media-runtime";
 import { parseDateStringTimestampMs as resolveGoogleChatTimestampMs } from "openclaw/plugin-sdk/number-runtime";
 import { mergePairLoopGuardConfig } from "openclaw/plugin-sdk/pair-loop-guard-runtime";
+import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { OpenClawConfig } from "../runtime-api.js";
 import { resolveWebhookPath } from "../runtime-api.js";
@@ -363,6 +364,7 @@ async function processMessageWithPipeline(params: {
       originatingTo: `googlechat:${spaceId}`,
       replyToId: replyThreadName,
       replyToIdFull: replyThreadName,
+      messageThreadId: replyThreadName,
     },
     message: {
       body,
@@ -394,6 +396,19 @@ async function processMessageWithPipeline(params: {
     typingIndicator = "message";
   }
   let typingMessage: GoogleChatTypingMessage | undefined;
+  let hasThreadedReply = false;
+  const resolveReplyThread = (payload: ReplyPayload): string | undefined => {
+    const explicitTarget = payload.replyToId?.trim();
+    if (explicitTarget) {
+      // Core reply directives identify the current message; Chat requires its thread.
+      return explicitTarget === message.name ? replyThreadName : explicitTarget;
+    }
+    if (payload.replyToCurrent === false) {
+      return undefined;
+    }
+    const mode = account.config.replyToMode ?? "off";
+    return mode === "all" || (mode === "first" && !hasThreadedReply) ? replyThreadName : undefined;
+  };
   const typingMessageThreadName =
     account.config.replyToMode && account.config.replyToMode !== "off"
       ? replyThreadName
@@ -448,14 +463,14 @@ async function processMessageWithPipeline(params: {
         delivery: {
           durable: (payload, info) =>
             resolveGoogleChatDurableReplyOptions({
-              payload,
+              payload: { ...payload, replyToId: resolveReplyThread(payload) },
               infoKind: info.kind,
               spaceId,
               hasTypingMessage: Boolean(typingMessage),
             }),
           deliver: async (payload) => {
             await deliverGoogleChatReply({
-              payload,
+              payload: { ...payload, replyToId: resolveReplyThread(payload) },
               account,
               spaceId,
               runtime,
@@ -467,7 +482,17 @@ async function processMessageWithPipeline(params: {
             // Only use typing message for first delivery
             typingMessage = undefined;
           },
-          onDelivered: () => {
+          onDelivered: (payload, _info, result) => {
+            if (
+              result?.visibleReplySent !== false &&
+              !result?.suppression &&
+              !payload.isCompactionNotice &&
+              !payload.isFallbackNotice &&
+              !payload.isStatusNotice &&
+              resolveReplyThread(payload)
+            ) {
+              hasThreadedReply = true;
+            }
             statusSink?.({ lastOutboundAt: Date.now() });
           },
           onError: (err, info) => {

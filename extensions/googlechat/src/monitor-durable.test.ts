@@ -29,6 +29,7 @@ describe("resolveGoogleChatDurableReplyOptions", () => {
     ).toEqual({
       to: "spaces/AAA",
       replyToId: null,
+      threadId: null,
     });
   });
 

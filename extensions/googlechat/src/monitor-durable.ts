@@ -4,7 +4,7 @@ import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 type GoogleChatDurableReplyOptions = {
   to: string;
   replyToId?: string | null;
-  threadId?: string;
+  threadId?: string | null;
 };
 
 export function resolveGoogleChatDurableReplyOptions(params: {
@@ -18,7 +18,8 @@ export function resolveGoogleChatDurableReplyOptions(params: {
   }
   const threadId = params.payload.replyToId?.trim() || undefined;
   if (!threadId) {
-    return { to: params.spaceId, replyToId: null };
+    // Omission lets durable delivery inherit MessageThreadId from inbound context.
+    return { to: params.spaceId, replyToId: null, threadId: null };
   }
   return {
     to: params.spaceId,
